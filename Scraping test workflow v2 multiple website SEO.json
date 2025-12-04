@@ -1,0 +1,361 @@
+{
+  "name": "Scraping test workflow v2 multiple website SEO",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a3cb3089-8cf3-4aa1-979b-b24cff800fb3",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { \n    \"feed\": \"https://techcrunch.com/feed/\",\n    \"source\": \"TechCrunch\"\n  },\n  { \n    \"feed\": \"https://www.cnbc.com/id/100003114/device/rss/rss.html\",\n    \"source\": \"CNBC\"\n  },\n  { \n    \"feed\": \"https://www.theverge.com/rss/ai-artificial-intelligence/index.xml\",\n    \"source\": \"The Verge\"\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "de37350a-0200-4872-9f7a-de4a3e3db912",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "f0d9e27b-4995-4c5d-991f-a97d7bb633b0",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.feed }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        624,
+        96
+      ],
+      "id": "4ee413e9-9763-4a65-ae59-98c4d3c2a706",
+      "name": "RSS Read"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=你是一位資深的 SEO 策略專家。請分析以下文章內容，並輸出詳細的 SEO 分析報告。\n\n請嚴格遵守以下規則：\n1. **必須**只回傳一個純 JSON 物件。\n2. JSON 必須包含以下 6 個特定欄位，且不要更改欄位名稱：\n   - \"primary_keywords\": 字串陣列 (1-3個主要關鍵字)\n   - \"secondary_keywords\": 字串陣列 (3-5個延伸長尾關鍵字)\n   - \"search_intent\": 字串 (只能從 \"Informational\", \"Transactional\", \"Navigational\", \"Commercial\" 中選一個)\n   - \"keyword_length_type\": 字串 (只能從 \"Short-tail\", \"Mid-tail\", \"Long-tail\" 中選一個，基於主要關鍵字判斷)\n   - \"content_category\": 字串 (文章的主題分類，例如 \"AI Regulation\", \"Generative AI\", \"Tech Industry\" 等)\n   - \"target_audience\": 字串 (推測的主要閱讀族群，例如 \"Developers\", \"Investors\", \"Policy Makers\")\n3. 不要使用 Markdown 標記 (如 ```json)，直接輸出 JSON 字串。\n\n輸入資料：\n標題: {{ $json.title }}\n摘要: {{ $json.content }}\nURL: {{ $json.link }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        96
+      ],
+      "id": "7ef46548-256a-4351-93f2-56f2e3a4d04c",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "LdECc8DjeAZCTlbY",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 核心解碼函式\nfunction decodeHtmlEntities(text) {\n  if (!text) return text;\n  return text\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&#8216;/g, '‘')\n    .replace(/&#8217;/g, '’')\n    .replace(/&#8220;/g, '“')\n    .replace(/&#8221;/g, '”')\n    .replace(/&#8230;/g, '...');\n}\n\n// 移除 HTML 標籤\nfunction removeHtmlTags(text) {\n    if (!text) return '';\n    return text.replace(/<[^>]*>/g, '').trim(); \n}\n\nconst finalItems = [];\n\nfor (const item of items) {\n  \n  // 1. 確保基本欄位存在\n  let title = item.json.title || '';\n  let link = item.json.link || item.json.url || ''; \n  let content = item.json.content || item.json.contentSnippet || item.json.summary || '';\n  \n  // 2. 辨識來源 (Source Name)\n  let sourceName = 'Unknown Source';\n  if (link.includes('techcrunch.com')) {\n    sourceName = 'TechCrunch';\n  } else if (link.includes('cnbc.com')) {\n    sourceName = 'CNBC';\n  } else if (link.includes('theverge.com')) {\n    sourceName = 'The Verge';\n  }\n  \n  // 3. 處理亂碼\n  title = decodeHtmlEntities(title);\n  content = decodeHtmlEntities(content);\n\n  // --- 關鍵修改：使用 Regex 進行更有智慧的篩選 ---\n  // \\bAI\\b : 確保 AI 是獨立單字 (不會抓到 PAID)\n  // AI : 必須是大寫\n  // | A\\.I\\. : 或者接受 A.I. 這種寫法\n  const aiRegex = /\\bAI\\b|\\bA\\.I\\.\\b/;\n\n  if (title && aiRegex.test(title)) {\n    \n    // 5. 整理內容\n    const cleanContent = removeHtmlTags(content);\n    let finalContent = cleanContent;\n    if (finalContent.length > 300) {\n        finalContent = finalContent.substring(0, 300) + '...';\n    }\n    \n    finalItems.push({\n        json: {\n            title: title,\n            link: link,\n            pubDate: item.json.pubDate,\n            content: finalContent, \n            sourceName: sourceName \n        }\n    });\n  }\n}\n\nreturn finalItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        96
+      ],
+      "id": "24a2182c-49b8-42de-a7c4-0b1d955db583",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 強力清潔函式：去除 HTML、換行符號與多餘空白\nfunction cleanText(text) {\n  if (!text) return \"\";\n  \n  // 1. 如果是物件或陣列，先轉字串\n  if (typeof text !== 'string') {\n      text = JSON.stringify(text);\n  }\n\n  return text\n    .replace(/<[^>]*>/g, '')       // 移除 HTML 標籤\n    .replace(/[\\r\\n]+/g, ' ')      // ⭐️ 關鍵：將換行符號 (\\r, \\n) 替換為單一空格\n    .replace(/\\s+/g, ' ')          // 將多個連續空格合併為一個\n    .trim();                       // 去除頭尾空白\n}\n\n// 格式化欄位函式 (處理陣列轉字串)\nconst formatField = (value, isArray = false) => {\n    if (!value) return \"N/A\";\n    if (isArray && Array.isArray(value)) return value.join(', ');\n    if (typeof value === 'object') return JSON.stringify(value);\n    // 對所有純文字欄位也進行清潔\n    return cleanText(value.toString());\n};\n\nreturn items.map((item, index) => {\n  const sourceNodeName = 'Code in JavaScript1'; \n  \n  let originalData = {};\n  let seoData = {};\n  \n  // --- PART 1: 抓取原始 RSS 資料 ---\n  try {\n    const upstreamItems = $(sourceNodeName).all();\n    if (upstreamItems && upstreamItems[index]) {\n      originalData = upstreamItems[index].json;\n    } else {\n      originalData = item.pairedItem ? item.pairedItem.item.json : {};\n    }\n  } catch (error) {\n    console.log('無法抓取上游資料');\n  }\n\n  // --- PART 2: 解析 AI JSON ---\n  try {\n    const geminiText = item.json.content.parts[0].text;\n    const firstOpen = geminiText.indexOf('{');\n    const lastClose = geminiText.lastIndexOf('}');\n    \n    if (firstOpen !== -1 && lastClose !== -1) {\n        const jsonString = geminiText.substring(firstOpen, lastClose + 1);\n        seoData = JSON.parse(jsonString);\n    }\n  } catch (error) {\n    // 解析失敗忽略\n  }\n\n  // --- PART 3: 輸出最終資料 (經過清潔) ---\n  return {\n    json: {\n      source_name: originalData.sourceName || \"Unknown\", \n      \n      // 這裡套用 cleanText 確保標題和摘要不會換行\n      title: cleanText(originalData.title || \"Title Not Found\"),\n      url: originalData.link || originalData.url || \"URL Not Found\",\n      \n      // ⭐️ 最容易跑版的是這個 Summary，務必清潔\n      summary: cleanText(originalData.content || originalData.summary || \"\"),\n      \n      primary_keywords: formatField(seoData.primary_keywords, true),\n      secondary_keywords: formatField(seoData.secondary_keywords, true),\n      search_intent: formatField(seoData.search_intent),\n      keyword_length_type: formatField(seoData.keyword_length_type),\n      content_category: formatField(seoData.content_category),\n      target_audience: formatField(seoData.target_audience)\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        96
+      ],
+      "id": "fd352eb1-4840-4c76-b5d0-7d85e5d2978b",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1fIFhJO60I1eydn4KmxBCwYs2x-YIpuFlk32DNwI1V7A",
+          "mode": "list",
+          "cachedResultName": "Multiple scrape&SEO test_3 website",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1fIFhJO60I1eydn4KmxBCwYs2x-YIpuFlk32DNwI1V7A/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "工作表1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1fIFhJO60I1eydn4KmxBCwYs2x-YIpuFlk32DNwI1V7A/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "primary_keywords",
+              "displayName": "primary_keywords",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "secondary_keywords",
+              "displayName": "secondary_keywords",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "search_intent",
+              "displayName": "search_intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "keyword_length_type",
+              "displayName": "keyword_length_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "content_category",
+              "displayName": "content_category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "target_audience",
+              "displayName": "target_audience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "analysis_status",
+              "displayName": "analysis_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source_name",
+              "displayName": "source_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1616,
+        80
+      ],
+      "id": "ce8447f5-9a94-4845-a96d-bcd31c60d0c4",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "aUErYTFPtWckqFQ2",
+          "name": "Google Sheets account_Emily"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "RSS Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Read": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2ca2de19-2fcb-4c7a-a7ba-84d1afd19d9a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fc9a9f8dcc9239b8f02a41de0b9d2a7f96e193f2cb25b6955be31626298181a4"
+  },
+  "id": "2XREiAyEOZDA90Ho",
+  "tags": []
+}
